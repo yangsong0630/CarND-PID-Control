@@ -1,3 +1,5 @@
+#include <algorithm>
+#include <iterator>
 #include <math.h>
 #include <uWS/uWS.h>
 #include <iostream>
@@ -8,6 +10,9 @@
 // for convenience
 using nlohmann::json;
 using std::string;
+using namespace std;
+
+#define N 100
 
 // For converting back and forth between radians and degrees.
 constexpr double pi() { return M_PI; }
@@ -34,11 +39,36 @@ int main() {
   uWS::Hub h;
 
   PID pid;
-  /**
-   * TODO: Initialize the pid variable.
-   */
+  
+  int n = 0;
+  double err = 0.0, total_err = 0.0, best_err = 100000.0;
+  double p[3] = {1.1147, 0.000342, 12.9026}, dp[3] = {0.01, 0.0001, 0.1};
+  double best_err_p[3] = {p[0], p[1], p[2]};
 
-  h.onMessage([&pid](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length, 
+// repeatedly tuning one parameter at a time, then update the initial value of that parameter before tuning another
+
+// Reference: https://robotics.stackexchange.com/questions/167/what-are-good-strategies-for-tuning-pid-loops
+// Reset all to zero, went off track soon after started. Initialized P to 0.1
+// tuning P 0.11, 0, 0, -> tuning D 0.11, 0, 10.7309 -> tuning P 1.1147, 0, 10.73 -> tuning D 1.1147, 0, 11.6787
+// -> tuning P 1.15, 0, 11.6787 -> tuning D 1.15, 0, 12.9026
+
+  /* twiddle one parameter for any certain run of simulator, 
+   * because the magnitude of errors for three parameters are different, 
+   * so tracking one minimum error(best_err) is incorrect
+   */
+  int p_index = 0; //2;//1;//0;
+  bool twiddle = true; //true;
+  bool pre_first_run = true, pre_second_run = true; // flags to keep track of which step of twiddling algorithm we are executing
+  bool reset_flags = false;
+  
+  
+  /**
+   * Initialize the pid variable.
+   */
+  pid.Init(p[0], p[1], p[2]);
+  
+  h.onMessage([&pid, &n, &err, &total_err, &best_err, &p, &dp, &best_err_p, &p_index, &twiddle, &pre_first_run, &pre_second_run, &reset_flags]
+              (uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length, 
                      uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
@@ -63,16 +93,102 @@ int main() {
            * NOTE: Feel free to play around with the throttle and speed.
            *   Maybe use another PID controller to control the speed!
            */
+          pid.UpdateError(cte);
+
+          if(twiddle == true) // if twiddling is needed
+          {
+            n += 1;
+          	if ( n > N ) // start twiddling
+            {
+              total_err += cte * cte;
+              err = total_err / (n-N);
+              // tune each parameter
+              if(pre_first_run == true)
+              {
+                p[p_index] += dp[p_index];
+                pre_first_run = false;
+              }
+              else
+              {
+                if(err < best_err)
+                {
+                  best_err = err;
+                  best_err_p[p_index] = p[p_index];
+                  dp[p_index] *= 1.1;
+                  // done for current cycle of twiddling
+                  reset_flags = true;
+                  cout << "best_err: " << best_err << endl;
+                  cout << "p_index " << p_index << " p[index] " << p[p_index] << " dp[index] " << dp[p_index] << endl;
+                }
+                else // previous addition of dp did not make error smaller
+                {
+                  if(pre_second_run == true)
+                  {
+                    p[p_index] -= 2 * dp[p_index];
+                    pre_second_run = false;
+                  }
+                  else
+                  {
+                    if(err < best_err)
+                    {
+                      best_err = err;
+                      best_err_p[p_index] = p[p_index];
+                      dp[p_index] *= 1.1;
+                      cout << "best_err: " << best_err << endl;
+                      cout << "p_index " << p_index << " p[index] " << p[p_index] << " dp[index] " << dp[p_index] << endl;
+                    }
+                    else
+                    {
+                      p[p_index] += dp[p_index];
+                      dp[p_index] *= 0.9;
+                    }
+                    // reset flags
+                    reset_flags = true;
+                  } // end of if(pre_second_run == true), else
+                }
+              } // end of if(pre_first_run == true), else
+
+              if (reset_flags)
+              {
+
+                cout << "Twiddle #" << n << " err " << err << " dp " << dp[p_index] << endl;
+                // p_index = (p_index + 1) % 3;
+                pre_first_run = pre_second_run = true;
+                reset_flags = false;
+              }
+              if ( n > 4 * N ) 
+              {
+                total_err = 0.0;
+                //best_err = 100000.0;
+                n = 0;
+
+                copy(begin(best_err_p), end(best_err_p), begin(p));
+
+                dp[0] = 0.01; dp[1] = 0.00001; dp[2] = 0.1; 
+                
+                pid.Init(best_err_p[0], best_err_p[1], best_err_p[2]);
+                cout << "Reinit p[0] p[1] p[2]: " << p[0] << " " << p[1] << " " << p[2] << endl;              
+              }
+            }
+            else // n <= N, wait till enough iterations have been executed
+            {  
+              // use current pid
+            }
+            
+          }
           
+          steer_value = pid.SteerValue();
           // DEBUG
-          std::cout << "CTE: " << cte << " Steering Value: " << steer_value 
-                    << std::endl;
+          /*std::cout << "CTE: " << cte << " Steering Value: " << steer_value 
+                    << std::endl;*/
 
           json msgJson;
           msgJson["steering_angle"] = steer_value;
           msgJson["throttle"] = 0.3;
           auto msg = "42[\"steer\"," + msgJson.dump() + "]";
-          std::cout << msg << std::endl;
+          
+          //std::cout << msg << std::endl;
+
           ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
         }  // end "telemetry" if
       } else {

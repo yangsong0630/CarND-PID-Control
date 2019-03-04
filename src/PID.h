@@ -30,7 +30,12 @@ class PID {
    * @output The total PID error
    */
   double TotalError();
-
+  
+  /**
+   * Calculate the steering value based on current tau and errors
+   */
+  double SteerValue();
+  
  private:
   /**
    * PID Errors
