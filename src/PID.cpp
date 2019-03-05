@@ -2,7 +2,7 @@
 #include <vector>
 
 /**
- * TODO: Complete the PID class. You may add any additional desired functions.
+ * Complete the PID class. 
  */
 
 PID::PID() {}
@@ -40,7 +40,7 @@ double PID::TotalError() {
   return p_error + d_error + i_error;  
 }
 
-double PID::SteerValue() {
+double PID::Response() {
 	/**
     * Calculate steering angle based on errors
     */

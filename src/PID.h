@@ -32,9 +32,9 @@ class PID {
   double TotalError();
   
   /**
-   * Calculate the steering value based on current tau and errors
+   * Calculate the PID response based on current tau and errors
    */
-  double SteerValue();
+  double Response();
   
  private:
   /**

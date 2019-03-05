@@ -12,7 +12,7 @@ using nlohmann::json;
 using std::string;
 using namespace std;
 
-#define N 100
+#define N 50
 
 // For converting back and forth between radians and degrees.
 constexpr double pi() { return M_PI; }
@@ -38,25 +38,31 @@ string hasData(string s) {
 int main() {
   uWS::Hub h;
 
-  PID pid;
+  PID pid_s, pid_t;
   
   int n = 0;
   double err = 0.0, total_err = 0.0, best_err = 100000.0;
-  double p[3] = {1.1147, 0.000342, 12.9026}, dp[3] = {0.01, 0.0001, 0.1};
+  double p_s[3] = {1.1147, 0.000342, 12.9026}, dp_s[3] = {0.01, 0.0001, 0.1};
+
+  double p[3] = {0.179356, 0.000771561, 5.65027}, dp[3] = {0.01, 0.0001, 0.1};
   double best_err_p[3] = {p[0], p[1], p[2]};
 
 // repeatedly tuning one parameter at a time, then update the initial value of that parameter before tuning another
 
 // Reference: https://robotics.stackexchange.com/questions/167/what-are-good-strategies-for-tuning-pid-loops
-// Reset all to zero, went off track soon after started. Initialized P to 0.1
+// Steering: Reset all to zero, went off track soon after started. Initialized P to 0.1
 // tuning P 0.11, 0, 0, -> tuning D 0.11, 0, 10.7309 -> tuning P 1.1147, 0, 10.73 -> tuning D 1.1147, 0, 11.6787
 // -> tuning P 1.15, 0, 11.6787 -> tuning D 1.15, 0, 12.9026
+
+// Throttle: tuning P 0.0331 (off track) -> tuning P 0.100787 (off track) -> tuning D 0.11, 0, 1.10639
+// -> tuning P 0.168256,0, 1.10639 -> tuning D 0.168256,0,3.79715 -> tuning P 0.179356 -> tuning D 5.65027
+// -> tuning I 0.000771561
 
   /* twiddle one parameter for any certain run of simulator, 
    * because the magnitude of errors for three parameters are different, 
    * so tracking one minimum error(best_err) is incorrect
    */
-  int p_index = 0; //2;//1;//0;
+  int p_index = 1; //2;//1;//0;
   bool twiddle = true; //true;
   bool pre_first_run = true, pre_second_run = true; // flags to keep track of which step of twiddling algorithm we are executing
   bool reset_flags = false;
@@ -65,9 +71,10 @@ int main() {
   /**
    * Initialize the pid variable.
    */
-  pid.Init(p[0], p[1], p[2]);
+  pid_s.Init(p_s[0], p_s[1], p_s[2]);
+  pid_t.Init(p[0], p[1], p[2]);
   
-  h.onMessage([&pid, &n, &err, &total_err, &best_err, &p, &dp, &best_err_p, &p_index, &twiddle, &pre_first_run, &pre_second_run, &reset_flags]
+  h.onMessage([&pid_s, &pid_t, &n, &err, &total_err, &best_err, &p, &dp, &best_err_p, &p_index, &twiddle, &pre_first_run, &pre_second_run, &reset_flags]
               (uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length, 
                      uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
@@ -86,14 +93,15 @@ int main() {
           double cte = std::stod(j[1]["cte"].get<string>());
           double speed = std::stod(j[1]["speed"].get<string>());
           double angle = std::stod(j[1]["steering_angle"].get<string>());
-          double steer_value;
+          double steer_value, throttle_value;
           /**
-           * TODO: Calculate steering value here, remember the steering value is
+           * Calculate steering value here, remember the steering value is
            *   [-1, 1].
            * NOTE: Feel free to play around with the throttle and speed.
            *   Maybe use another PID controller to control the speed!
            */
-          pid.UpdateError(cte);
+          pid_s.UpdateError(cte);
+          pid_t.UpdateError(fabs(cte));
 
           if(twiddle == true) // if twiddling is needed
           {
@@ -156,7 +164,7 @@ int main() {
                 pre_first_run = pre_second_run = true;
                 reset_flags = false;
               }
-              if ( n > 4 * N ) 
+              if ( n > 2 * N ) 
               {
                 total_err = 0.0;
                 //best_err = 100000.0;
@@ -166,7 +174,7 @@ int main() {
 
                 dp[0] = 0.01; dp[1] = 0.00001; dp[2] = 0.1; 
                 
-                pid.Init(best_err_p[0], best_err_p[1], best_err_p[2]);
+                pid_t.Init(best_err_p[0], best_err_p[1], best_err_p[2]);
                 cout << "Reinit p[0] p[1] p[2]: " << p[0] << " " << p[1] << " " << p[2] << endl;              
               }
             }
@@ -177,14 +185,18 @@ int main() {
             
           }
           
-          steer_value = pid.SteerValue();
+          steer_value = pid_s.Response();
+          throttle_value = 0.5 + pid_t.Response();
+
           // DEBUG
           /*std::cout << "CTE: " << cte << " Steering Value: " << steer_value 
+                    << std::endl;*/
+          /*std::cout << "CTE: " << cte << " Throttle Value: " << throttle_value 
                     << std::endl;*/
 
           json msgJson;
           msgJson["steering_angle"] = steer_value;
-          msgJson["throttle"] = 0.3;
+          msgJson["throttle"] = throttle_value; //0.3;
           auto msg = "42[\"steer\"," + msgJson.dump() + "]";
           
           //std::cout << msg << std::endl;
